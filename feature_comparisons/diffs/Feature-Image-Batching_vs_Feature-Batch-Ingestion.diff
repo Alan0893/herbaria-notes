@@ -1,0 +1,208 @@
+diff --git a/classes/SpecUploadBase.php b/classes/SpecUploadBase.php
+index 890fc94f7..167c8cf60 100644
+--- a/classes/SpecUploadBase.php
++++ b/classes/SpecUploadBase.php
+@@ -1514,6 +1514,44 @@ class SpecUploadBase extends SpecUpload{
+ 				else{
+ 					$this->outputMsg('<li>FAILED! ERROR: '.$this->conn->error.'</li> ');
+ 				}
++
++				// Create new batch for images
++				$this->outputMsg('<li>Creating new batch... </li>');
++				$timestamp = time(); // Get the current timestamp
++				$readableTimestamp = date('Y-m-d H:i:s', $timestamp); // Convert the timestamp to a human-readable format
++				$batchname = 'Batch ' . $readableTimestamp; // Concatenate 'batch' with the timestamp
++				$sql = "INSERT INTO batch (batch_name, image_batch_path, last_edited, collID) VALUES ('Test Batch', '/batch/test', -1, $this->collId)";
++				if($this->conn->query($sql)){
++					$this->outputMsg('<li style="margin-left:10px;">Batch created</li> ');
++				}
++				else{
++					$this->outputMsg('<li style="margin-left:10px;">BATCH FAILED! ERROR: '.$this->conn->error.'</li> ');
++				}
++
++				// Add images to batch
++				$sql_set_ordinal = "SET @ordinal = 0;";
++				if ($this->conn->query($sql_set_ordinal)) {
++					$sql_insert = "
++						INSERT INTO batch_XREF (imgid, batchID, ordinal)
++						SELECT imgid, batchID, @ordinal := @ordinal + 1
++						FROM images
++						CROSS JOIN (
++							SELECT batchID, initialtimestamp 
++							FROM batch 
++							ORDER BY batchID DESC 
++							LIMIT 1
++						) latest_batch
++						WHERE images.initialtimestamp = latest_batch.initialtimestamp;
++					";
++					
++					if ($this->conn->query($sql_insert)) {
++						$this->outputMsg('<li style="margin-left:10px;">Images added to batch</li>');
++					} else {
++						$this->outputMsg('<li style="margin-left:10px;">BATCH FAILED! ERROR: ' . $this->conn->error . '</li>');
++					}
++				} else {
++					$this->outputMsg('<li style="margin-left:10px;">BATCH FAILED! ERROR: ' . $this->conn->error . '</li>');
++				}
+ 			}
+ 		}
+ 		$rs->free();
+diff --git a/config/schema/1.0/patches/db_schema_patch-batch-ingestion.sql b/config/schema/1.0/patches/db_schema_patch-batch-ingestion.sql
+new file mode 100644
+index 000000000..35c632e80
+--- /dev/null
++++ b/config/schema/1.0/patches/db_schema_patch-batch-ingestion.sql
+@@ -0,0 +1,9 @@
++INSERT IGNORE INTO schemaversion (versionnumber) values ("batch-ingestion-patch");
++
++-- DWCA ingestion ingests the data firstly into the uploadspectemp table
++-- That uploadspectemp table's eventDate column uses date format, when it should be
++-- varchar(32) like the omoccurrences table. Not sure if it's intended, but this fixes it for now:
++ALTER TABLE `uploadspectemp` MODIFY `eventDate` varchar(32);
++
++-- MORE NOTES: This patch has not been updated since switching to using the newer Symbiota version, so it
++-- needs to be investigated if this bug has been fixed. If so, this patch is not needed anymore.
+\ No newline at end of file
+diff --git a/config/schema/1.0/patches/db_schema_patch-image-batching.sql b/config/schema/1.0/patches/db_schema_patch-image-batching.sql
+deleted file mode 100644
+index 9594d0a8d..000000000
+--- a/config/schema/1.0/patches/db_schema_patch-image-batching.sql
++++ /dev/null
+@@ -1,56 +0,0 @@
+-INSERT IGNORE INTO schemaversion (versionnumber) values ("image-batching-patch");
+-
+--- Create batch table
+-DROP TABLE IF EXISTS `batch`;
+-CREATE TABLE `batch` (
+-  `batchID` int(11) NOT NULL AUTO_INCREMENT,
+-  `ingest_date` timestamp NOT NULL,
+-  `completed_date` timestamp NULL,
+-  `batch_name` varchar(100) NOT NULL,
+-  `image_batch_path` varchar(100) NOT NULL,
+-  `initialtimestamp` TIMESTAMP NULL DEFAULT current_timestamp,
+-  `last_edited` int(11) NULL,
+-  `collID` int(11) NOT NULL,
+-  PRIMARY KEY (`batchID`)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+-
+--- Create cross-reference table between the batch table and images table
+-DROP TABLE IF EXISTS `batch_XREF`;
+-CREATE TABLE `batch_XREF` (
+-  `imgid` int(10) unsigned NOT NULL,
+-  `batchID` int(11) NOT NULL,
+-  `ordinal` INT(10) NOT NULL,
+-  `initialtimestamp` TIMESTAMP NULL DEFAULT current_timestamp,
+-  PRIMARY KEY (`imgid`,`batchID`),
+-  KEY `FK_batch_XREF_img` (`imgid`),
+-  KEY `FK_batch_XREF_batch` (`batchID`),
+-  CONSTRAINT `FK_batch_XREF_img` FOREIGN KEY (`imgid`) REFERENCES `images` (`imgid`) ON DELETE CASCADE ON UPDATE CASCADE,
+-  CONSTRAINT `FK_batch_XREF_batch` FOREIGN KEY (`batchID`) REFERENCES `batch` (`batchID`) ON DELETE CASCADE ON UPDATE CASCADE
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+-
+--- Create batch user table
+-DROP TABLE IF EXISTS `batch_user`;
+-CREATE TABLE `batch_user` (
+-  `batch_userID` int(10) NOT NULL AUTO_INCREMENT,
+-  `batchID` int(10) NOT NULL,
+-  `uid` int(10) unsigned NOT NULL,
+-  `last_position` int(10) NOT NULL,
+-  `initialtimestamp` TIMESTAMP NULL DEFAULT current_timestamp,
+-  PRIMARY KEY (`batch_userID`),
+-  KEY `FK_batch_user_batch` (`batchID`),
+-  KEY `FK_batch_user_user` (`uid`),
+-  CONSTRAINT `FK_batch_user_batch` FOREIGN KEY (`batchID`) REFERENCES `batch` (`batchID`) ON DELETE CASCADE ON UPDATE CASCADE,
+-  CONSTRAINT `FK_batch_user_user` FOREIGN KEY (`uid`) REFERENCES `users` (`uid`) ON DELETE CASCADE ON UPDATE CASCADE
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+-
+-DROP TABLE IF EXISTS `images_barcode`;
+-CREATE TABLE `images_barcode` (
+-  `imgid` int(10) unsigned NOT NULL,
+-  `barcode` varchar(255) NOT NULL,
+-  `occid` int unsigned NOT NULL,
+-  PRIMARY KEY (`barcode`),
+-  KEY `FK_images_barcode_images` (`imgid`),
+-  KEY `FK_images_barcode_omoccurrences` (`occid`),
+-  CONSTRAINT `FK_images_barcode_images` FOREIGN KEY (`imgid`) REFERENCES `images` (`imgid`) ON DELETE CASCADE ON UPDATE CASCADE,
+-  CONSTRAINT `FK_images_barcode_omoccurrences` FOREIGN KEY (`occid`) REFERENCES `omoccurrences` (`occid`) ON DELETE CASCADE ON UPDATE CASCADE
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+\ No newline at end of file
+diff --git a/preprocessing/dwca-preprocess-script.py b/preprocessing/dwca-preprocess-script.py
+new file mode 100644
+index 000000000..3b9334d72
+--- /dev/null
++++ b/preprocessing/dwca-preprocess-script.py
+@@ -0,0 +1,73 @@
++## A simple script for preprocessing the dwca files for ingestion. This script was needed because there were a few discrepancies between how symbiota handles data and how harvard's dwca files are packaged.
++
++import zipfile
++import csv
++import sys
++import codecs
++from tempfile import NamedTemporaryFile, mkdtemp
++import os
++import shutil
++from tqdm import tqdm
++
++def fix_associatedMedia(zip_file_path, only_keep_records_with_images):
++    tempfile = NamedTemporaryFile(mode='w', delete=False, newline='')
++    temp_dir = mkdtemp()
++    # Extract multimedia links from the multimedia file in the ZIP archive
++    url_list = {} # key: id, value: image url
++    with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
++        with zip_ref.open("multimedia.txt", 'r') as multimedia_csv:
++            csv_reader = csv.DictReader(codecs.iterdecode(multimedia_csv, 'utf-8'), delimiter="\t")
++            for row in tqdm(csv_reader, desc="Reading media links from multimedia.txt"):
++                url_list[row['id']] = row['identifier']
++    # Write the links into a temporary occurrence file
++    with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
++        with zip_ref.open("occurrence.txt", 'r') as occurrence_csv:
++            csv_reader = csv.DictReader(codecs.iterdecode(occurrence_csv, 'utf-8'), delimiter="\t")
++            fields = csv_reader.fieldnames
++            csv_writer = csv.DictWriter(tempfile, delimiter="\t", fieldnames=fields)
++            csv_writer.writeheader()
++            for row in tqdm(csv_reader, desc="Updating occurrence.txt with media links"):
++                if row['id'] in url_list:
++                    row['associatedMedia'] = url_list[row['id']]
++                    try:
++                        csv_writer.writerow(row)
++                    except Exception as e:
++                        print(f"Skipped row {row['id']}\n")
++                else:
++                    if not only_keep_records_with_images:
++                        try:
++                            csv_writer.writerow(row)
++                        except Exception as e:
++                            print(f"Skipped row {row['id']}\n")
++            tempfile.close()
++    # create a copy of the zip archive without the original occurrence.txt
++    print("Creating new zip archive...")
++    with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
++        zip_ref.extractall(temp_dir)
++        os.remove(os.path.join(temp_dir,"occurrence.txt"))
++    # rezip with new occurrence.txt
++    print("Rezipping file with new occurrence.txt...")
++    basename, _ = os.path.splitext(zip_file_path)
++    new_path = basename + "-preprocessed"
++    shutil.make_archive(new_path, 'zip', temp_dir)
++    new_zip_path = new_path + ".zip"
++    with zipfile.ZipFile(new_zip_path, 'a') as zip_ref:
++        zip_ref.write(tempfile.name, "occurrence.txt")
++    print("Success: " + new_zip_path)
++    # change guid, add issue regarding update occurrence for images upon ingestion
++
++if __name__ == "__main__":
++    if len(sys.argv) != 3:
++        print("Usage: python [preprocess-script.py] [path to dwca zip file] [only keep records with images (Y/N)]")
++        sys.exit(1)
++    
++    zip_file_path = sys.argv[1]
++    arg2 = sys.argv[2]
++    if arg2 == "Y":
++        only_keep_records_with_images = True
++    elif arg2 == "N":
++        only_keep_records_with_images = False
++    else:
++        print("Please only enter Y/N to indicate whether to only keep records with images")
++        sys.exit(1)
++    fix_associatedMedia(zip_file_path, only_keep_records_with_images)
+\ No newline at end of file

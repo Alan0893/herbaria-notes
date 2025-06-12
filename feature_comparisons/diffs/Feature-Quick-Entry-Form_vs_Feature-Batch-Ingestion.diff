@@ -1,0 +1,779 @@
+diff --git a/classes/OccurrenceEditorDeterminations.php b/classes/OccurrenceEditorDeterminations.php
+index 332259a71..5a092d398 100644
+--- a/classes/OccurrenceEditorDeterminations.php
++++ b/classes/OccurrenceEditorDeterminations.php
+@@ -18,6 +18,78 @@ class OccurrenceEditorDeterminations extends OccurrenceEditorManager{
+  		parent::__destruct();
+ 	}
+ 
++	public function getImgIndex($imgID) {
++		$imgIndex = false;
++		$query = "SELECT ordinal FROM batch_XREF WHERE imgid = '$imgID' LIMIT 1";
++		$result = $this->conn->query($query);
++
++		if ($result && $row = $result->fetch_assoc()) {
++			$imgIndex = $row['ordinal'];
++		}
++		$result->free();
++
++		return $imgIndex;
++	}
++
++	public function getlastEdit($batchID) {
++		$lastEditImgId = false;
++		$query = "SELECT last_edited FROM batch WHERE batchID = '$batchID' LIMIT 1";
++		$result = $this->conn->query($query);
++
++		if ($result && $row = $result->fetch_assoc()) {
++			$lastEditImgId = $row['last_edited'];
++		}
++		$result->free();
++
++		return $lastEditImgId;
++	}
++
++	public function getBatch($collid) {
++		$batchValues = array();	
++		$query = "SELECT batchID FROM batch WHERE collID = '$collid'";
++        $result = $this->conn->query($query);
++        while ($row = $result->fetch_assoc()) {
++            $batchValues[] = $row['batchID'];
++        }
++        $result->free();
++        return $batchValues;
++	}
++
++	public function getBatchName($batchID) {
++		$nameValues = array();
++		$query = "SELECT batch_name FROM batch WHERE batchID = '$batchID'";
++		$result = $this->conn->query($query);
++		while ($row = $result->fetch_assoc()) {
++			$nameValues[] = $row['batch_name'];
++		}
++		$result->free();
++		return $nameValues;
++	}
++
++	public function getImgIDs($batchID) {
++		$imgIDs = array();
++		$query = "SELECT imgid FROM batch_XREF WHERE batchID = '$batchID'";
++		$result = $this->conn->query($query);
++		while ($row = $result->fetch_assoc()) {
++			$imgIDs[] = $row['imgid'];
++		}
++		$result->free();
++		return $imgIDs;
++	}
++
++	public function getOneOccID($imgID) {
++		$occid = false;
++		$query = "SELECT occid FROM images WHERE imgid = '$imgID' LIMIT 1";
++		$result = $this->conn->query($query);
++
++		if ($result && $row = $result->fetch_assoc()) {
++			$occid = $row['occid'];
++		}
++		$result->free();
++
++		return $occid;
++	}
++
+ 	public function getDetMap($identBy, $dateIdent, $sciName){
+ 		$retArr = array();
+ 		$hasCurrent = 0;
+diff --git a/classes/OccurrenceEditorManager.php b/classes/OccurrenceEditorManager.php
+index e3c1b2128..3d5b4c5e1 100644
+--- a/classes/OccurrenceEditorManager.php
++++ b/classes/OccurrenceEditorManager.php
+@@ -2788,9 +2788,9 @@ class OccurrenceEditorManager {
+ 	}
+ 	
+ 	// For quick entry form
+-	public function getImgIDs() {
++	public function getImgIDs($batchID) {
+ 		$imgIDs = array();
+-		$query = "SELECT imgid FROM images";
++		$query = "SELECT imgid FROM batch_XREF WHERE batchID = '$batchID'";
+ 		$result = $this->conn->query($query);
+ 		while ($row = $result->fetch_assoc()) {
+ 			$imgIDs[] = $row['imgid'];
+@@ -2937,4 +2937,4 @@ class OccurrenceEditorManager {
+ 		}
+ 		return $newStr;
+ 	}
+-}
++}
+\ No newline at end of file
+diff --git a/classes/SpecUploadBase.php b/classes/SpecUploadBase.php
+index 890fc94f7..167c8cf60 100644
+--- a/classes/SpecUploadBase.php
++++ b/classes/SpecUploadBase.php
+@@ -1514,6 +1514,44 @@ class SpecUploadBase extends SpecUpload{
+ 				else{
+ 					$this->outputMsg('<li>FAILED! ERROR: '.$this->conn->error.'</li> ');
+ 				}
++
++				// Create new batch for images
++				$this->outputMsg('<li>Creating new batch... </li>');
++				$timestamp = time(); // Get the current timestamp
++				$readableTimestamp = date('Y-m-d H:i:s', $timestamp); // Convert the timestamp to a human-readable format
++				$batchname = 'Batch ' . $readableTimestamp; // Concatenate 'batch' with the timestamp
++				$sql = "INSERT INTO batch (batch_name, image_batch_path, last_edited, collID) VALUES ('Test Batch', '/batch/test', -1, $this->collId)";
++				if($this->conn->query($sql)){
++					$this->outputMsg('<li style="margin-left:10px;">Batch created</li> ');
++				}
++				else{
++					$this->outputMsg('<li style="margin-left:10px;">BATCH FAILED! ERROR: '.$this->conn->error.'</li> ');
++				}
++
++				// Add images to batch
++				$sql_set_ordinal = "SET @ordinal = 0;";
++				if ($this->conn->query($sql_set_ordinal)) {
++					$sql_insert = "
++						INSERT INTO batch_XREF (imgid, batchID, ordinal)
++						SELECT imgid, batchID, @ordinal := @ordinal + 1
++						FROM images
++						CROSS JOIN (
++							SELECT batchID, initialtimestamp 
++							FROM batch 
++							ORDER BY batchID DESC 
++							LIMIT 1
++						) latest_batch
++						WHERE images.initialtimestamp = latest_batch.initialtimestamp;
++					";
++					
++					if ($this->conn->query($sql_insert)) {
++						$this->outputMsg('<li style="margin-left:10px;">Images added to batch</li>');
++					} else {
++						$this->outputMsg('<li style="margin-left:10px;">BATCH FAILED! ERROR: ' . $this->conn->error . '</li>');
++					}
++				} else {
++					$this->outputMsg('<li style="margin-left:10px;">BATCH FAILED! ERROR: ' . $this->conn->error . '</li>');
++				}
+ 			}
+ 		}
+ 		$rs->free();
+diff --git a/collections/misc/collprofiles.php b/collections/misc/collprofiles.php
+index 2ab64db87..b0d341c5f 100644
+--- a/collections/misc/collprofiles.php
++++ b/collections/misc/collprofiles.php
+@@ -5,7 +5,6 @@ else include_once($SERVER_ROOT . '/content/lang/collections/misc/collprofiles.en
+ include_once($SERVER_ROOT . '/classes/OccurrenceCollectionProfile.php');
+ include_once($SERVER_ROOT . '/classes/OccurrenceEditorManager.php');
+ include_once($SERVER_ROOT . '/classes/utilities/GeneralUtil.php');
+-include_once($SERVER_ROOT.'/classes/OccurrenceEditorDeterminations.php');
+ 
+ header('Content-Type: text/html; charset=' . $CHARSET);
+ unset($_SESSION['editorquery']);
+@@ -33,23 +32,7 @@ if ($SYMB_UID) {
+ 		elseif (array_key_exists('CollEditor', $USER_RIGHTS) && in_array($collid, $USER_RIGHTS['CollEditor'])) $editCode = 1;
+ 	}
+ }
+-
+-// For quick entry form 
+-$occManager = new OccurrenceEditorDeterminations();
+-
+-// get image ids from the images table
+-$imgIDs = $occManager->getImgIDs();
+-$firstImgId = $imgIDs[0];
+-$firstBarcode = $occManager->getBarcode($firstImgId);
+-$firstIndex = 0;
+-$lastImgId = end($imgIDs);
+-$lastBarcode = $occManager->getBarcode($lastImgId);
+-$lastIndex = count($imgIDs) - 1;
+-$imgNum = count($imgIDs);
+-$occData = array();
+-$barcode = $occManager->getBarcode($firstIndex);
+ ?>
+-
+ <!DOCTYPE html>
+ <html lang="<?php echo $LANG_TAG ?>">
+ <head>
+@@ -377,10 +360,10 @@ $barcode = $occManager->getBarcode($firstIndex);
+ 									<?= $LANG['EDIT_EXISTING'] ?>
+ 								</a>
+ 							</li>
+-							<!-- add the link to quick entry form -->
++							<!-- add a bullet point to link to the image batch -->
+ 							<li>
+-								<a href="../quickentry/occurrencequickentry.php?csmode=0&collid=<?= $collid ?>&&imgid=<?= $firstImgId ?>&imgindex=1&barcode=0&occid=5639&occindex=1">
+-									<?= $LANG['QUICK_ENTRY_FORM'] ?>
++								<a href="../quickentry/transcribe.php?collid=<?php echo $collid;?>">
++									<?php echo (isset($LANG['IMAGE_BATCH']) ? $LANG['IMAGE_BATCH'] : 'Image Transcription Quick Entry'); ?>
+ 								</a>
+ 							</li>
+ 							<li>
+diff --git a/collections/quickentry/occurrencequickentry.php b/collections/quickentry/occurrencequickentry.php
+index 522ebbfb1..af819b672 100644
+--- a/collections/quickentry/occurrencequickentry.php
++++ b/collections/quickentry/occurrencequickentry.php
+@@ -32,25 +32,28 @@ if($crowdSourceMode){
+ 	$occManager->setCrowdSourceMode(1);
+ }
+ 
+-// get all image ids from the images table
+-$imgIDs = $occManager->getImgIDs();
+-$firstImgId = $imgIDs[0];
+-$firstBarcode = $occManager->getBarcode($firstImgId);
+-$firstIndex = 0;
+-$lastImgId = end($imgIDs);
+-$lastBarcode = $occManager->getBarcode($lastImgId);
+-$lastIndex = count($imgIDs) - 1;
+-$imgNum = count($imgIDs);
+-$currentImgId = $_REQUEST['imgid'];
+-$currentImgIndex = $_REQUEST['imgindex'];
+-$occData = array();
+-// occData is a hashtable, which has imgid as key, and occid as value
+-foreach ($imgIDs as $imgID) {
+-	$occData[$imgID] = $occManager->getOneOccID($imgID);
+-}
+-$firstOccId = $occData[$firstImgId];
+-$lastOccId = $occData[$lastImgId];
+-$barcode = $occManager->getBarcode($currentImgId);
++if (isset($_REQUEST['batchid'])) {
++    $batchId = $_REQUEST['batchid'];
++    // Use $batchId as needed
++	$imgIDs = $occManager->getImgIDs($batchId);
++	$firstImgId = $imgIDs[0];
++	$firstBarcode = $occManager->getBarcode($firstImgId);
++	$firstIndex = 0;
++	$lastImgId = end($imgIDs);
++	$lastBarcode = $occManager->getBarcode($lastImgId);
++	$lastIndex = count($imgIDs) - 1;
++	$imgNum = count($imgIDs);
++	$currentImgId = $_REQUEST['imgid'];
++	$currentImgIndex = $_REQUEST['imgindex'];
++	$occData = array();
++	// occData is a hashtable, which has imgid as key, and occid as value
++	foreach ($imgIDs as $imgID) {
++        $occData[$imgID] = $occManager->getOneOccID($imgID);
++    }
++	$firstOccId = $occData[$firstImgId];
++	$lastOccId = $occData[$lastImgId];
++	$barcode = $occManager->getBarcode($currentImgId);
++} 
+ 
+ //Sanitation
+ if(!is_numeric($occId)) $occId = '';
+@@ -169,10 +172,12 @@ if($SYMB_UID){
+ 	include_once 'editProcessor.php';
+ 	if($action == 'saveOccurEdits'){
+ 		$statusStr = $occManager->editOccurrence($_POST,$isEditor);
++		$updateSuccess = $occManager->updateLastEdited($batchId, $currentImgId);
+ 	} 
+ 	// save TODO: need to update this correctly
+ 	elseif ($action == 'saveOCR'){
+ 		$statusStr = $occManager->editOccurrence($_POST,$isEditor);
++		$updateSuccess = $occManager->updateLastEdited($batchId, $currentImgId);
+ 	}
+ 	if($isEditor){
+ 		//Available to full editors and taxon editors
+@@ -444,20 +449,20 @@ if($SYMB_UID){
+ 
+ 	if($imgNum !== false){
+ 		$navStr = '<b>';
+-		if($currentImgIndex > 0) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.($firstImgId).', '.($firstIndex).', '.($firstOccId).', '.($firstIndex).')" title="'.(isset($LANG['FIRST_REC'])?$LANG['FIRST_REC']:'First Record').'">';
++		if($currentImgIndex > 0) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.($batchId).', '.($firstImgId).', '.($firstIndex).', '.($firstBarcode).', '.($firstOccId).', '.($firstIndex).')" title="'.(isset($LANG['FIRST_REC'])?$LANG['FIRST_REC']:'First Record').'">';
+ 		$navStr .= '|&lt;';
+ 		if($currentImgIndex > 0) $navStr .= '</a>';
+ 		$navStr .= '&nbsp;&nbsp;&nbsp;&nbsp;';
+-		if($currentImgIndex > 0) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.($prevImgid).', '.($currentImgIndex-1).', '.($prevOccid).', '.($currentImgIndex-1).')" title="'.(isset($LANG['PREV_REC']) ? $LANG['PREV_REC'] : 'Previous Record').'">';
++		if($currentImgIndex > 0) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.($batchId).', '.($prevImgid).', '.($currentImgIndex-1).', '.($prevBarcode).', '.($prevOccid).', '.($currentImgIndex-1).')" title="'.(isset($LANG['PREV_REC']) ? $LANG['PREV_REC'] : 'Previous Record').'">';
+ 		$navStr .= '&lt;&lt;';
+ 		if($currentImgIndex > 0) $navStr .= '</a>';
+ 		$recIndex = ($currentImgIndex<$imgNum?($currentImgIndex + 1):'*');
+ 		$navStr .= '&nbsp;&nbsp;| '.($recIndex).' of '.($imgNum).' |&nbsp;&nbsp;';
+-		if ($currentImgIndex < $imgNum-1) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.($nextImgid).', '.($currentImgIndex+1).', '.($nextOccid).', '.($currentImgIndex+1).')" title="'.(isset($LANG['NEXT_REC']) ? $LANG['NEXT_REC']:'Next Record').'">';
++		if ($currentImgIndex < $imgNum-1) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.($batchId).', '.($nextImgid).', '.($currentImgIndex+1).', '.($nextBarcode).', '.($nextOccid).', '.($currentImgIndex+1).')" title="'.(isset($LANG['NEXT_REC']) ? $LANG['NEXT_REC']:'Next Record').'">';
+ 		$navStr .= '&gt;&gt;';
+ 		if($occIndex<$imgNum-1) $navStr .= '</a>';
+ 		$navStr .= '&nbsp;&nbsp;&nbsp;&nbsp;';
+-		if($occIndex<$imgNum-1) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.($lastImgId).', '.($imgNum-1).', '.($lastOccId).', '.($imgNum-1).')" title="'.(isset($LANG['LAST_REC'])?$LANG['LAST_REC']:'Last Record').'">';
++		if($occIndex<$imgNum-1) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.($batchId).', '.($lastImgId).', '.($imgNum-1).', '.($lastBarcode).', '.($lastOccId).', '.($imgNum-1).')" title="'.(isset($LANG['LAST_REC'])?$LANG['LAST_REC']:'Last Record').'">';
+ 		$navStr .= '&gt;|';
+ 		if($occIndex<$imgNum-1) $navStr .= '</a> ';
+ 		$navStr .= '</b>';
+@@ -549,11 +554,13 @@ else{
+ 					}
+ 				});
+ 			}
+-			function navigateToRecordNew(crowdSourceMode, gotomode, collId, imgId, imgIndex, occId, occIndex) {
++			function navigateToRecordNew(crowdSourceMode, gotomode, collId, batchId, imgId, imgIndex, barcode, occId, occIndex) {
++				// If we have correct dataset, the barcode should not be null
++				// if(barcode == null && occId == null) {
+ 				if(occId == null) {
+ 					var url = 'occurrencequickentry.php?gotomode=' + gotomode + '&collid=' + collId + '&imgid=' + imgId + '&imgindex=' + imgIndex;
+ 				} else {
+-					var url = 'occurrencequickentry.php?csmode=' + crowdSourceMode + '&collid=' + collId + '&imgid=' + imgId + '&imgindex=' + imgIndex + '&occid=' + occId + '&occindex=' + occIndex;
++					var url = 'occurrencequickentry.php?csmode=' + crowdSourceMode + '&collid=' + collId +'&batchid=' + batchId + '&imgid=' + imgId + '&imgindex=' + imgIndex + '&barcode=' + barcode + '&occid=' + occId + '&occindex=' + occIndex;
+ 				}
+ 				window.location.href = url;
+ 				event.preventDefault();
+@@ -611,10 +618,11 @@ else{
+ 					var crowdSourceMode = <?php echo $crowdSourceMode; ?>;
+ 					var gotomode = <?php echo $goToMode; ?>;
+ 					var collId = <?php echo $collId; ?>;
++					var batchId = <?php echo $batchId; ?>;
+ 					var occIndex = pageNumber - 1; 
+ 
+ 					// Call the navigateToRecordNew function with the calculated parameters
+-					navigateToRecordNew(crowdSourceMode, gotomode, collId, imgId, occIndex, occId, occIndex);
++					navigateToRecordNew(crowdSourceMode, gotomode, collId, batchId, imgId, occIndex, barcode, occId, occIndex);
+ 				} else {
+ 					// Handle invalid page number input
+ 					alert(pageNumber);
+@@ -1028,6 +1036,7 @@ else{
+ 									<div id="bottomSubmitDiv">
+ 									<input type="hidden" name="csmode" value="<?php echo $crowdSourceMode; ?>">
+ 									<input type="hidden" name="collid" value="<?php echo $collId; ?>">
++									<input type="hidden" name="batchid" value="<?php echo $batchId; ?>">
+ 									<input type="hidden" name="imgid" value="<?php echo $imgId; ?>">
+ 									<input type="hidden" name="imgindex" value="<?php echo $currentImgIndex; ?>">
+ 									<input type="hidden" name="barcode" value="<?php echo $barcode; ?>">
+@@ -1042,7 +1051,7 @@ else{
+ 													<button 
+ 														type="submit" 
+ 														value="Previous" 
+-														onclick="navigateToRecordNew(<?php echo $crowdSourceMode . ', ' . $goToMode . ', ' . $collId . ', ' . $prevImgid . ', ' . ($currentImgIndex-1) . ', ' . $prevOccid . ', ' . ($currentImgIndex-1); ?>)">
++														onclick="navigateToRecordNew(<?php echo $crowdSourceMode . ', ' . $goToMode . ', ' . $collId . ', ' . $batchId . ', ' . $prevImgid . ', ' . ($currentImgIndex-1) . ', ' . $prevBarcode . ', ' . $prevOccid . ', ' . ($currentImgIndex-1); ?>)">
+ 														Previous
+ 													</button>
+ 													<a href="../misc/collprofiles.php?collid=<?php echo $collId; ?>&emode=1" >
+@@ -1051,7 +1060,7 @@ else{
+ 													<button 
+ 														type="submit" 
+ 														value="Next" 
+-														onclick="navigateToRecordNew(<?php echo $crowdSourceMode . ', ' . $goToMode . ', ' . $collId . ', ' . $nextImgid . ', ' . ($currentImgIndex+1) . ', ' . $nextOccid . ', ' . ($currentImgIndex+1); ?>)">
++														onclick="navigateToRecordNew(<?php echo $crowdSourceMode . ', ' . $goToMode . ', ' . $collId . ', ' . $batchId . ', ' . $nextImgid . ', ' . ($currentImgIndex+1) . ', ' . $nextBarcode . ', ' . $nextOccid . ', ' . ($currentImgIndex+1); ?>)">
+ 														Next
+ 													</button>
+ 													<input type="hidden" name="occindex" value="<?php echo is_numeric($occIndex)?$occIndex:''; ?>" />
+diff --git a/collections/quickentry/transcribe.php b/collections/quickentry/transcribe.php
+new file mode 100644
+index 000000000..978ca24fb
+--- /dev/null
++++ b/collections/quickentry/transcribe.php
+@@ -0,0 +1,175 @@
++<?php
++include_once('../../config/symbini.php');
++// TODO: double check what is this file for
++include_once($SERVER_ROOT.'/classes/OccurrenceEditorDeterminations.php');
++if($LANG_TAG != 'en' && file_exists($SERVER_ROOT.'/content/lang/collections/editor/transcribe.'.$LANG_TAG.'.php')) include_once($SERVER_ROOT.'/content/lang/collections/editor/transcribe.'.$LANG_TAG.'.php');
++else include_once($SERVER_ROOT.'/content/lang/collections/editor/transcribe.en.php');
++header("Content-Type: text/html; charset=".$CHARSET);
++
++if(!$SYMB_UID) header('Location: ../../profile/index.php?refurl=../collections/editor/transcribe.php?'.htmlspecialchars($_SERVER['QUERY_STRING'], ENT_QUOTES));
++
++$crowdSourceMode = array_key_exists('csmode', $_REQUEST) ? filter_var($_REQUEST['csmode'], FILTER_SANITIZE_NUMBER_INT) : 0;
++$goToMode = array_key_exists('gotomode', $_REQUEST) ? filter_var($_REQUEST['gotomode'], FILTER_SANITIZE_NUMBER_INT) : 0;
++
++$occManager = new OccurrenceEditorDeterminations();
++$occManager->setCollId($collid);
++$collMap = $occManager->getCollMap();
++$collid = $_REQUEST['collid'];
++$qryCnt = $occManager->getQueryRecordCount();
++
++if($collMap){
++	if($collMap['colltype']=='General Observations'){
++		$isGenObs = 1;
++		$collType = 'obs';
++	}
++	elseif($collMap['colltype']=='Observations'){
++		$collType = 'obs';
++	}
++	$propArr = $occManager->getDynamicPropertiesArr();
++	if(isset($propArr['modules-panel'])){
++		foreach($propArr['modules-panel'] as $module){
++			if(isset($module['paleo']['status']) && $module['paleo']['status']) $moduleActivation[] = 'paleo';
++			elseif(isset($module['matSample']['status']) && $module['matSample']['status']){
++				$moduleActivation[] = 'matSample';
++				if($tabTarget > 3) $tabTarget++;
++			}
++		}
++	}
++}
++
++$isEditor = 0;
++$batchIds = $occManager->getBatch($collid);
++
++if($IS_ADMIN || (array_key_exists("CollAdmin",$USER_RIGHTS) && in_array($collid,$USER_RIGHTS["CollAdmin"]))){
++	$isEditor = 1;
++}
++elseif(array_key_exists("CollEditor",$USER_RIGHTS) && in_array($collid,$USER_RIGHTS["CollEditor"])){
++	$isEditor = 1;
++}
++$statusStr = '';
++
++if ($_SERVER["REQUEST_METHOD"] === "POST") {
++	if (isset($_POST["batchID"])) {
++		$selectedBatchID = $_POST["batchID"];
++		$imgIDs = $occManager->getImgIDs($selectedBatchID);
++	} else {
++		$imgIDs = $occManager->getAllImgIDs();		
++	}
++	$firstImgId = $imgIDs[0];
++	$firstBarcode = !empty($occManager->getBarcode($firstImgId)) ? ($occManager->getBarcode($firstImgId)) : 0;
++	$firstIndex = 0;
++	$lastImgId = end($imgIDs);
++	$lastBarcode = !empty($occManager->getBarcode($lastBarcode)) ? ($occManager->getBarcode($lastBarcode)) : 0;
++	$lastIndex = count($imgIDs) - 1;
++	$occData = array();
++	$lastEditImgId = $occManager->getlastEdit($selectedBatchID);
++	$lastEditBarcode = !empty($occManager->getBarcode($lastEditImgId)) ? ($occManager->getBarcode($lastEditImgId)) : 0;
++	$lastEditIndex = $occManager->getImgIndex($lastEditImgId) - 1;
++	// occData is a hashtable, which has imgid as key, and occid as value
++	foreach ($imgIDs as $imgID) {
++        $occData[$imgID] = $occManager->getOneOccID($imgID);
++    }
++	$firstOccId = !empty($occData[$firstImgId]) ? ($occData[$firstImgId]) : 0;
++	$lastOccId = !empty($occData[$lastImgId]) ? ($occData[$lastImgId]) : 0;
++	$lastEditOccId = !empty($occData[$lastEditImgId]) ? ($occData[$lastEditImgId]) : 0;
++}
++
++?>
++
++<html>
++	<head>
++	    <meta http-equiv="Content-Type" content="text/html; charset=<?php echo $CHARSET;?>">
++		<title><?php echo $DEFAULT_TITLE.$LANG['IMAGE_BATCH']; ?></title>
++		<?php
++		$activateJQuery = true;
++		if(file_exists($SERVER_ROOT.'/includes/head.php')){
++			include_once($SERVER_ROOT.'/includes/head.php');
++		}
++		else{
++			echo '<link href="'.$CLIENT_ROOT.'/css/jquery-ui.css" type="text/css" rel="stylesheet" />';
++			echo '<link href="'.$CLIENT_ROOT.'/css/basse.css?ver=1" type="text/css" rel="stylesheet" />';
++			echo '<link href="'.$CLIENT_ROOT.'/css/symbiota/quickentry.css" type="text/css" rel="stylesheet" />';
++		}
++		?>
++		<script src="<?php echo $CLIENT_ROOT; ?>/js/jquery-3.7.1.min.js" type="text/javascript"></script>
++		<script src="<?php echo $CLIENT_ROOT; ?>/js/jquery-ui.min.js" type="text/javascript"></script>
++		<script src="<?php echo $CLIENT_ROOT; ?>/js/symb/collections.editor.query.js" type="text/javascript"></script>
++		<script src="<?php echo $CLIENT_ROOT; ?>/js/symb/collections.editor.main.js" type="text/javascript"></script>
++		<script type="text/javascript">
++			function navigateToRecordNew(crowdSourceMode, gotomode, collId, batchId, imgId, imgIndex, barcode, occId, occIndex) {
++				if(barcode == null && occId == null) {
++					var url = 'occurrencequickentry.php?gotomode=' + gotomode + '&collid=' + collId + '&imgid=' + imgId + '&imgindex=' + imgIndex;
++				} else {
++					var url = 'occurrencequickentry.php?csmode=' + crowdSourceMode + '&collid=' + collId +'&batchid=' + batchId + '&imgid=' + imgId + '&imgindex=' + imgIndex + '&barcode=' + barcode + '&occid=' + occId + '&occindex=' + occIndex;
++				}
++				window.location.href = url;
++				event.preventDefault();
++			}
++		</script>
++	</head>
++	<body>
++	<?php
++	include($SERVER_ROOT.'/includes/header.php');
++	?>
++	<div class='navpath'>
++		<a href='../../index.php'><?php echo $LANG['HOME']; ?></a> &gt;&gt;
++		<a href="../misc/collprofiles.php?collid=<?php echo $collid; ?>&emode=1"><?php echo $LANG['COLL_MANAGE']; ?></a> &gt;&gt;
++		<b><?php echo $LANG['BATCH_DETERS']; ?></b>
++	</div>
++	<!-- This is inner text! -->
++	<div id="innertext">
++		<?php
++		if($isEditor){
++			?>
++			<div style="margin:0px;">
++				<fieldset style="padding:10px;">
++					<legend><b><?php echo $LANG['TRANSCRIBE_INTO_SPECIFY']; ?></b></legend>
++					<div style="margin:15px;width:700px;">
++                        <!-- TODO: update the submit function of the form -->
++						<form name="batchform" method="post">
++							<div style="margin-bottom:15px; align-items: center;">
++								<h4 style="margin-right: 15px;">Work On batch: <?php echo($selectedBatchID) ?></h4>
++								<div style="display: flex; flex-grow: 1;">
++									<button type="button" name="first" style="flex-grow: 0.5; margin-right: 5px;" onclick="return navigateToRecordNew(<?php echo ($crowdSourceMode).', '.($goToMode).', '.($collid).', '.($selectedBatchID).', '.($firstImgId).', '.($firstIndex).', '.($firstBarcode).', '.($firstOccId).', '.($firstIndex) ; ?>)"><?php echo $LANG['START_FROM']; ?> first.</button>
++									<button type="button" name="last" style="flex-grow: 0.5; margin-right: 5px;" onclick="return navigateToRecordNew(<?php echo ($crowdSourceMode).', '.($goToMode).', '.($collid).', '.($selectedBatchID).', '.($lastImgId).', '.($lastIndex).', '.($lastBarcode).', '.($lastOccId).', '.($lastIndex); ?>)"><?php echo $LANG['START_FROM']; ?> last.</button>
++									<button type="button" name="lastView" style="flex-grow: 0.5;" onclick="return navigateToRecordNew(<?php echo ($crowdSourceMode).', '.($goToMode).', '.($collid).', '.($selectedBatchID).', '.($lastEditImgId).', '.($lastEditIndex).', '.($lastEditBarcode).', '.($lastEditOccId).', '.($lastEditIndex); ?>)"><?php echo $LANG['START_FROM']; ?> last edit.</button>
++								</div>
++							</div>
++							<div>
++								<b><?php echo $LANG['WORK_ON_BATCH']; ?></b>
++								<select id="batchID" name="batchID" style="width:400px;" onchange="this.form.submit()">
++									<option value="">-- Select Batch --</option>
++									<?php
++									foreach ($batchIds as $batchID) {
++										$batch_name = current($occManager->getbatchName($batchID));
++										echo "<option value=\"$batchID\">$batch_name</option>";
++									}
++									?>
++								</select>
++							</div>
++						</form>
++					</div>
++				</fieldset>
++				<!-- TODO: need to figure out what this status is -->
++				<!-- <fieldset>
++					<div>
++						<p style="margin:0px;"><?php // echo $LANG['STATUS']; ?></p>
++					</div>
++				</fieldset> -->
++			</div>
++			<?php
++		}
++		else{
++			?>
++			<div style="font-weight:bold;margin:20px;font-weight:150%;">
++				<?php echo $LANG['NO_PERMISSIONS']; ?>
++			</div>
++			<?php
++		}
++		?>
++	</div>
++	<?php
++	include($SERVER_ROOT.'/includes/footer.php');
++	?>
++	</body>
++</html>
+\ No newline at end of file
+diff --git a/config/schema/1.0/patches/db_schema_patch-batch-ingestion.sql b/config/schema/1.0/patches/db_schema_patch-batch-ingestion.sql
+new file mode 100644
+index 000000000..35c632e80
+--- /dev/null
++++ b/config/schema/1.0/patches/db_schema_patch-batch-ingestion.sql
+@@ -0,0 +1,9 @@
++INSERT IGNORE INTO schemaversion (versionnumber) values ("batch-ingestion-patch");
++
++-- DWCA ingestion ingests the data firstly into the uploadspectemp table
++-- That uploadspectemp table's eventDate column uses date format, when it should be
++-- varchar(32) like the omoccurrences table. Not sure if it's intended, but this fixes it for now:
++ALTER TABLE `uploadspectemp` MODIFY `eventDate` varchar(32);
++
++-- MORE NOTES: This patch has not been updated since switching to using the newer Symbiota version, so it
++-- needs to be investigated if this bug has been fixed. If so, this patch is not needed anymore.
+\ No newline at end of file
+diff --git a/config/schema/1.0/patches/db_schema_patch-quick-entry.sql b/config/schema/1.0/patches/db_schema_patch-quick-entry.sql
+deleted file mode 100644
+index 2b45de20a..000000000
+--- a/config/schema/1.0/patches/db_schema_patch-quick-entry.sql
++++ /dev/null
+@@ -1,21 +0,0 @@
+-INSERT IGNORE INTO schemaversion (versionnumber) values ("quick-entry-patch");
+-
+--- Add missing columns to the omocurrences table where the quick entry data is stored
+-ALTER TABLE `omoccurrences` 
+-    ADD COLUMN `filedUnder` varchar(255) DEFAULT NULL,
+-    ADD COLUMN `geoWithin` varchar(255) DEFAULT NULL,
+-    ADD COLUMN `herbarium` varchar(4) NOT NULL,
+-    ADD COLUMN `accesNum` varchar(255) DEFAULT NULL,
+-    ADD COLUMN `currName` varchar(255) DEFAULT NULL,
+-    ADD COLUMN `idQualifier` varchar(16) DEFAULT NULL,
+-    ADD COLUMN `detText` text DEFAULT NULL,
+-    ADD COLUMN `provenance` text DEFAULT NULL,
+-    ADD COLUMN `container` varchar(255) DEFAULT NULL,
+-    ADD COLUMN `collTrip` varchar(255) DEFAULT NULL,
+-    ADD COLUMN `highGeo` varchar(255) DEFAULT NULL,
+-    ADD COLUMN `frequency` varchar(255) DEFAULT NULL,
+-    ADD COLUMN `prepMethod` varchar(255) DEFAULT NULL,
+-    ADD COLUMN `format` varchar(255) DEFAULT NULL,
+-    ADD COLUMN `verbLat` varchar(255) DEFAULT NULL,
+-    ADD COLUMN `verbLong` varchar(255) DEFAULT NULL,
+-    ADD COLUMN `method` varchar(255) DEFAULT NULL;
+\ No newline at end of file
+diff --git a/content/lang/collections/misc/collprofiles.en.php b/content/lang/collections/misc/collprofiles.en.php
+index e07138a64..d2f1cbc59 100644
+--- a/content/lang/collections/misc/collprofiles.en.php
++++ b/content/lang/collections/misc/collprofiles.en.php
+@@ -24,7 +24,6 @@ $LANG['ADD_NEW_OCCUR'] = 'Add New Occurrence Record';
+ $LANG['CREATE_NEW_REC'] = 'Create New Records Using Image';
+ $LANG['SKELETAL'] = 'Add Skeletal Records';
+ $LANG['EDIT_EXISTING'] = 'Edit Existing Occurrence Records';
+-$LANG['QUICK_ENTRY_FORM'] = 'Quick Entry Form';
+ $LANG['ADD_BATCH_DETER'] = 'Add Batch Determinations/Nomenclatural Adjustments';
+ $LANG['PRINT_LABELS'] = 'Print Specimen Labels';
+ $LANG['PRINT_ANNOTATIONS'] = 'Print Annotations Labels';
+diff --git a/js/symb/collections.editor.main.js b/js/symb/collections.editor.main.js
+index 93ecba305..78b15e88b 100644
+--- a/js/symb/collections.editor.main.js
++++ b/js/symb/collections.editor.main.js
+@@ -85,70 +85,6 @@ $(document).ready(function () {
+     },
+   });
+ 
+-  // For quick entry form
+-  $("#ffcurrname").autocomplete({
+-		source: "/collections/quickentry/rpc/getcurrnamesuggest.php",
+-		minLength: 3, 
+-		autoFocus: true, 
+-		change: function(event, ui) {
+-			fieldChanged('currName')
+-		}
+-	});
+-	
+-	$("#fffileunder").autocomplete({
+-		source: "/collections/quickentry/rpc/getfiledundersuggest.php",
+-		minLength: 3, 
+-		autoFocus: true, 
+-		change: function(event, ui) {
+-			fieldChanged('filedUnder')
+-		}
+-	});
+-
+-	$("#ffidentifiedby").autocomplete({
+-		source: "/collections/quickentry/rpc/getidentifiedbysuggest.php",
+-		minLength: 3, 
+-		autoFocus: true, 
+-		change: function(event, ui) {
+-			fieldChanged('identifiedby')
+-		}
+-	});
+-
+-	$("#ffrecordedby").autocomplete({
+-		source: "/collections/quickentry/rpc/getrecordedbysuggest.php",
+-		minLength: 3, 
+-		autoFocus: true, 
+-		change: function(event, ui) {
+-			fieldChanged('recordedby')
+-		}
+-	});
+-
+-	$("#ffcolltrip").autocomplete({
+-		source: "/collections/quickentry/rpc/getcolltripsuggest.php",
+-		minLength: 3, 
+-		autoFocus: true, 
+-		change: function(event, ui) {
+-			fieldChanged('collTrip')
+-		}
+-	});
+-
+-	$("#ffgeowithin").autocomplete({
+-		source: "/collections/quickentry/rpc/getgeowithnsuggest.php",
+-		minLength: 3, 
+-		autoFocus: true, 
+-		change: function(event, ui) {
+-			fieldChanged('geoWithin')
+-		}
+-	});
+-
+-	$("#ffhighgeo").autocomplete({
+-		source: "/collections/quickentry/rpc/gethighgeosuggest.php",
+-		minLength: 3, 
+-		autoFocus: true, 
+-		change: function(event, ui) {
+-			fieldChanged('highGeo')
+-		}
+-	});
+-
+   $("#ffsciname").autocomplete({
+     source: "rpc/getspeciessuggest.php",
+     minLength: 3,
+diff --git a/js/symb/collections.editor.query.js b/js/symb/collections.editor.query.js
+index 3d3a38a5f..773c5a46e 100644
+--- a/js/symb/collections.editor.query.js
++++ b/js/symb/collections.editor.query.js
+@@ -173,18 +173,6 @@ function submitQueryForm(qryIndex){
+ 	if(verifyQueryForm(f)) f.submit();
+ }
+ 
+-// For quick entry form 
+-function toggleDetail(){
+-	var btn = document.getElementById("detail-btn");
+-	if (btn.value === "detailed") {
+-		btn.value = "minimal";
+-		btn.innerHTML = "Minimal";
+-	} else {
+-		btn.value = "detailed";
+-		btn.innerHTML = "Detailed";
+-	}
+-}
+-
+ function submitQueryEditor(f){
+ 	f.action = "occurrenceeditor.php"
+ 	f.direction.value = "";
+@@ -205,12 +193,6 @@ function submitQueryTable(f){
+ 	return true;
+ }
+ 
+-// For quick entry form 
+-function navigateToURL(coll) {
+-    var url = "../editor/transcribe.php?collid=" + coll;
+-    window.location.href = url;
+-}
+-
+ function setOrderBy(formObject){
+ 	/*
+ 	if(formObject.value != ""){
+diff --git a/preprocessing/dwca-preprocess-script.py b/preprocessing/dwca-preprocess-script.py
+new file mode 100644
+index 000000000..3b9334d72
+--- /dev/null
++++ b/preprocessing/dwca-preprocess-script.py
+@@ -0,0 +1,73 @@
++## A simple script for preprocessing the dwca files for ingestion. This script was needed because there were a few discrepancies between how symbiota handles data and how harvard's dwca files are packaged.
++
++import zipfile
++import csv
++import sys
++import codecs
++from tempfile import NamedTemporaryFile, mkdtemp
++import os
++import shutil
++from tqdm import tqdm
++
++def fix_associatedMedia(zip_file_path, only_keep_records_with_images):
++    tempfile = NamedTemporaryFile(mode='w', delete=False, newline='')
++    temp_dir = mkdtemp()
++    # Extract multimedia links from the multimedia file in the ZIP archive
++    url_list = {} # key: id, value: image url
++    with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
++        with zip_ref.open("multimedia.txt", 'r') as multimedia_csv:
++            csv_reader = csv.DictReader(codecs.iterdecode(multimedia_csv, 'utf-8'), delimiter="\t")
++            for row in tqdm(csv_reader, desc="Reading media links from multimedia.txt"):
++                url_list[row['id']] = row['identifier']
++    # Write the links into a temporary occurrence file
++    with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
++        with zip_ref.open("occurrence.txt", 'r') as occurrence_csv:
++            csv_reader = csv.DictReader(codecs.iterdecode(occurrence_csv, 'utf-8'), delimiter="\t")
++            fields = csv_reader.fieldnames
++            csv_writer = csv.DictWriter(tempfile, delimiter="\t", fieldnames=fields)
++            csv_writer.writeheader()
++            for row in tqdm(csv_reader, desc="Updating occurrence.txt with media links"):
++                if row['id'] in url_list:
++                    row['associatedMedia'] = url_list[row['id']]
++                    try:
++                        csv_writer.writerow(row)
++                    except Exception as e:
++                        print(f"Skipped row {row['id']}\n")
++                else:
++                    if not only_keep_records_with_images:
++                        try:
++                            csv_writer.writerow(row)
++                        except Exception as e:
++                            print(f"Skipped row {row['id']}\n")
++            tempfile.close()
++    # create a copy of the zip archive without the original occurrence.txt
++    print("Creating new zip archive...")
++    with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
++        zip_ref.extractall(temp_dir)
++        os.remove(os.path.join(temp_dir,"occurrence.txt"))
++    # rezip with new occurrence.txt
++    print("Rezipping file with new occurrence.txt...")
++    basename, _ = os.path.splitext(zip_file_path)
++    new_path = basename + "-preprocessed"
++    shutil.make_archive(new_path, 'zip', temp_dir)
++    new_zip_path = new_path + ".zip"
++    with zipfile.ZipFile(new_zip_path, 'a') as zip_ref:
++        zip_ref.write(tempfile.name, "occurrence.txt")
++    print("Success: " + new_zip_path)
++    # change guid, add issue regarding update occurrence for images upon ingestion
++
++if __name__ == "__main__":
++    if len(sys.argv) != 3:
++        print("Usage: python [preprocess-script.py] [path to dwca zip file] [only keep records with images (Y/N)]")
++        sys.exit(1)
++    
++    zip_file_path = sys.argv[1]
++    arg2 = sys.argv[2]
++    if arg2 == "Y":
++        only_keep_records_with_images = True
++    elif arg2 == "N":
++        only_keep_records_with_images = False
++    else:
++        print("Please only enter Y/N to indicate whether to only keep records with images")
++        sys.exit(1)
++    fix_associatedMedia(zip_file_path, only_keep_records_with_images)
+\ No newline at end of file
